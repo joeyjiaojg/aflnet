@@ -355,9 +355,7 @@ static inline u8 has_new_bits(u8* virgin_map);
 u32 server_wait_usecs = 10000;
 u32 poll_wait_msecs = 1;
 u32 socket_timeout_usecs = 1000;
-u8 net_protocol;
-u8* net_ip;
-u32 net_port;
+u8* net_url;
 char *response_buf = NULL;
 int response_buf_size = 0; //the size of the whole response buffer
 u32 *response_bytes = NULL; //an array keeping accumulated response buffer size
@@ -986,8 +984,6 @@ int send_over_network()
 {
   int n;
   u8 likely_buggy = 0;
-  struct sockaddr_in serv_addr;
-  struct sockaddr_in local_serv_addr;
 
   //Clean up the server if needed
   if (cleanup_script) system(cleanup_script);
@@ -1007,12 +1003,38 @@ int send_over_network()
     response_bytes = NULL;
   }
 
-  //Create a TCP/UDP socket
+  // parse url
+  char  buf[1024] = {0};
+  char **tokens;
+  int tokenCount = 3;
+
+  if (strlen(net_url) > sizeof(buf)) return 1;
+  tokens = (char**)malloc(sizeof(char*) * (tokenCount));
+
+  strncpy(buf, net_url, strlen(net_url));
+  str_rtrim(buf);
+
+  str_split(buf, "/", tokens, tokenCount);
+  if (!tokens[0] || !tokens[1] || !tokens[2]) return 1;
+
   int sockfd = -1;
-  if (net_protocol == PRO_TCP)
+  u8* proto = tokens[0];
+  u8 protocol;
+  if (!strcmp(proto, "tcp:")) {
+    protocol = PRO_TCP;
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  else if (net_protocol == PRO_UDP)
+  } else if (!strcmp(proto, "udp:")) {
+    protocol = PRO_UDP;
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+  } else if (!strcmp(proto, "domain:")) {
+    protocol = PRO_DOMAIN;
+    u8* type = tokens[1];
+    if (!strcmp(type, "SOCK_STREAM")) {
+      sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    } else if (!strcmp(type, "SOCK_DGRAM")) {
+      sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    } else return 1;
+  } else return 1;
 
   if (sockfd < 0) {
     PFATAL("Cannot create a socket");
@@ -1025,36 +1047,67 @@ int send_over_network()
   timeout.tv_usec = socket_timeout_usecs;
   setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
 
-  memset(&serv_addr, '0', sizeof(serv_addr));
+  if (protocol == PRO_TCP || protocol == PRO_UDP) {
+    struct sockaddr_in addr;
+    struct sockaddr_in local_serv_addr;
 
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(net_port);
-  serv_addr.sin_addr.s_addr = inet_addr(net_ip);
+    //TODO: check the format of this IP address
+    u8* ip = tokens[1];
+    u32 port = atoi(tokens[2]);
+    if (port == 0) return 1;
 
-  //This piece of code is only used for targets that send responses to a specific port number
-  //The Kamailio SIP server is an example. After running this code, the intialized sockfd 
-  //will be bound to the given local port
-  if(local_port > 0) {
-    local_serv_addr.sin_family = AF_INET;
-    local_serv_addr.sin_addr.s_addr = INADDR_ANY;
-    local_serv_addr.sin_port = htons(local_port);
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr(ip);
+    int len = sizeof(addr);
 
-    local_serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (bind(sockfd, (struct sockaddr*) &local_serv_addr, sizeof(struct sockaddr_in)))  {
-      FATAL("Unable to bind socket on local source port");
+    //This piece of code is only used for targets that send responses to a specific port number
+    //The Kamailio SIP server is an example. After running this code, the intialized sockfd 
+    //will be bound to the given local port
+    if(local_port > 0) {
+      local_serv_addr.sin_family = AF_INET;
+      local_serv_addr.sin_addr.s_addr = INADDR_ANY;
+      local_serv_addr.sin_port = htons(local_port);
+  
+      local_serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+      if (bind(sockfd, (struct sockaddr*) &local_serv_addr, sizeof(struct sockaddr_in)))  {
+        FATAL("Unable to bind socket on local source port");
+      }
     }
-  }
 
-  if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-    //If it cannot connect to the server under test
-    //try it again as the server initial startup time is varied
-    for (n=0; n < 1000; n++) {
-      if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == 0) break;
-      usleep(1000);
+    if(connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+      //If it cannot connect to the server under test
+      //try it again as the server initial startup time is varied
+      for (n=0; n < 1000; n++) {
+        if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) break;
+        usleep(1000);
+      }
+      if (n== 1000) {
+        close(sockfd);
+        return 1;
+      }
     }
-    if (n== 1000) {
-      close(sockfd);
-      return 1;
+  } else if (protocol == PRO_DOMAIN) {
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    u8* path = tokens[2];
+#define UNIX_PATH_MAX 108
+    strncpy(addr.sun_path, path, UNIX_PATH_MAX);
+    int len = strlen(addr.sun_path) + sizeof(addr.sun_family);
+
+    if(connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+      //If it cannot connect to the server under test
+      //try it again as the server initial startup time is varied
+      for (n=0; n < 1000; n++) {
+        if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) break;
+        usleep(1000);
+      }
+      if (n== 1000) {
+        close(sockfd);
+        return 1;
+      }
     }
   }
 
@@ -2898,8 +2951,10 @@ EXP_ST void init_forkserver(char** argv) {
 
     setsid();
 
-    dup2(dev_null_fd, 1);
-    dup2(dev_null_fd, 2);
+    if (!getenv("AFL_DEBUG_CHILD")) {
+      dup2(dev_null_fd, 1);
+      dup2(dev_null_fd, 2);
+    }
 
     if (out_file) {
 
@@ -3179,8 +3234,10 @@ static u8 run_target(char** argv, u32 timeout) {
 
       setsid();
 
-      dup2(dev_null_fd, 1);
-      dup2(dev_null_fd, 2);
+      if (!getenv("AFL_DEBUG_CHILD")) {
+        dup2(dev_null_fd, 1);
+        dup2(dev_null_fd, 2);
+      }
 
       if (out_file) {
 
@@ -8074,7 +8131,7 @@ static void usage(u8* argv0) {
 
        "Settings for network protocol fuzzing (AFLNet):\n\n"
 
-       "  -N netinfo    - server information (e.g., tcp://127.0.0.1/8554)\n"
+       "  -N netinfo    - server information (e.g., tcp://127.0.0.1/8554 or domain://[SOCK_STREAM|SOCK_DGRAM]//dev/socket/path)\n"
        "  -P protocol   - application protocol to be tested (e.g., RTSP, FTP, DTLS12, DNS, SMTP, SSH, TLS)\n"
        "  -D usec       - waiting time (in micro seconds) for the server to initialize\n"
        "  -W msec       - waiting time (in miliseconds) for receiving the first response to each input sent\n"
@@ -8936,8 +8993,7 @@ int main(int argc, char** argv) {
 
       case 'N': /* Network configuration */
         if (use_net) FATAL("Multiple -N options not supported");
-        if (parse_net_config(optarg, &net_protocol, &net_ip, &net_port)) FATAL("Bad syntax used for -N. Check the network setting. [tcp/udp]://127.0.0.1/port");
-
+        net_url = optarg;
         use_net = 1;
         break;
 
@@ -9058,7 +9114,7 @@ int main(int argc, char** argv) {
   if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
 
   //AFLNet - Check for required arguments
-  if (!use_net) FATAL("Please specify network information of the server under test (e.g., tcp://127.0.0.1/8554)");
+  if (!use_net) FATAL("Please specify network information of the server under test (e.g., tcp://127.0.0.1/8554, domain://SOCK_STREAM/domain_socket_path)");
 
   if (!protocol_selected) FATAL("Please specify the protocol to be tested using the -P option");
 

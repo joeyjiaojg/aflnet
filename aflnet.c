@@ -597,11 +597,11 @@ region_t* extract_requests_sip(unsigned char* buf, unsigned int buf_size, unsign
 
     //Check if the last bytes match the terminator, and the next ones are a SIP command
     if ((mem_count > 1) && (memcmp(&mem[mem_count - 1], terminator, 1) == 0) &&
-	  (((buf_size - byte_count >= 8) && (memcmp(buf + byte_count, "REGISTER", 8)==0) ) ||
-	  ((buf_size - byte_count >= 6) && (memcmp(buf + byte_count, "INVITE", 6)==0) ) ||
-	  ((buf_size - byte_count >= 3) && (memcmp(buf + byte_count, "ACK", 3)==0) ) ||
-	  ((buf_size - byte_count >= 3) && (memcmp(buf + byte_count, "BYE", 3)==0) ) )
-	  ) {
+    (((buf_size - byte_count >= 8) && (memcmp(buf + byte_count, "REGISTER", 8)==0) ) ||
+    ((buf_size - byte_count >= 6) && (memcmp(buf + byte_count, "INVITE", 6)==0) ) ||
+    ((buf_size - byte_count >= 3) && (memcmp(buf + byte_count, "ACK", 3)==0) ) ||
+    ((buf_size - byte_count >= 3) && (memcmp(buf + byte_count, "BYE", 3)==0) ) )
+    ) {
       region_count++;
       regions = (region_t *)ck_realloc(regions, region_count * sizeof(region_t));
       regions[region_count - 1].start_byte = cur_start;
@@ -1547,7 +1547,7 @@ void delete_kl_messages(klist_t(lms) *kl_messages)
   }
 
   /* Finally, destroy the list */
-	kl_destroy(lms, kl_messages);
+  kl_destroy(lms, kl_messages);
 }
 
 kliter_t(lms) *get_last_message(klist_t(lms) *kl_messages)
@@ -1575,7 +1575,7 @@ u32 save_kl_messages_to_file(klist_t(lms) *kl_messages, u8 *fname, u8 replay_ena
   for (it = kl_begin(kl_messages); it != kl_end(kl_messages) && message_count < max_count; it = kl_next(it)) {
     message_size = kl_val(it)->msize;
     if (replay_enabled) {
-		  mem = (u8 *)ck_realloc(mem, 4 + len + message_size);
+      mem = (u8 *)ck_realloc(mem, 4 + len + message_size);
 
       //Save packet size first
       u32 *psize = (u32*)&mem[len];
@@ -1719,87 +1719,36 @@ void save_regions_to_file(region_t *regions, unsigned int region_count, unsigned
   fclose(fp);
 }
 
-int str_split(char* a_str, const char* a_delim, char **result, int a_count)
+void str_split(char* a_str, const char* a_delim, char **result, int a_count)
 {
-	char *token;
-	int count = 0;
+  int count = 0;
 
-	/* count number of tokens */
-	/* get the first token */
-	char* tmp1 = strdup(a_str);
-	token = strtok(tmp1, a_delim);
+  char* tmp = strdup(a_str);
+  char* token = strtok_r(tmp, a_delim, &tmp);
 
-	/* walk through other tokens */
-	while (token != NULL)
-	{
-		count++;
-		token = strtok(NULL, a_delim);
-	}
-
-	if (count != a_count)
-	{
-		return 1;
-	}
-
-	/* split input string, store tokens into result */
-	count = 0;
-	/* get the first token */
-	token = strtok(a_str, a_delim);
-
-	/* walk through other tokens */
-
-	while (token != NULL)
-	{
-		result[count] = token;
-		count++;
-		token = strtok(NULL, a_delim);
-	}
-
-	free(tmp1);
-	return 0;
+  while (token)
+  {
+    result[count] = strdup(token);
+    count++;
+    if (count == a_count - 1) {
+      result[count] = tmp;
+      break;
+    }
+    token = strtok_r(NULL, a_delim, &tmp);
+  }
 }
 
 void str_rtrim(char* a_str)
 {
-	char* ptr = a_str;
-	int count = 0;
-	while ((*ptr != '\n') && (*ptr != '\t') && (*ptr != ' ') && (count < strlen(a_str))) {
-		ptr++;
-		count++;
-	}
-	if (count < strlen(a_str)) {
-		*ptr = '\0';
-	}
-}
-
-int parse_net_config(u8* net_config, u8* protocol, u8** ip_address, u32* port)
-{
-  char  buf[80];
-  char **tokens;
-  int tokenCount = 3;
-
-  tokens = (char**)malloc(sizeof(char*) * (tokenCount));
-
-  if (strlen(net_config) > 80) return 1;
-
-  strncpy(buf, net_config, strlen(net_config));
-   str_rtrim(buf);
-
-  if (!str_split(buf, "/", tokens, tokenCount))
-  {
-      if (!strcmp(tokens[0], "tcp:")) {
-        *protocol = PRO_TCP;
-      } else if (!strcmp(tokens[0], "udp:")) {
-        *protocol = PRO_UDP;
-      } else return 1;
-
-      //TODO: check the format of this IP address
-      *ip_address = strdup(tokens[1]);
-
-      *port = atoi(tokens[2]);
-      if (*port == 0) return 1;
-  } else return 1;
-  return 0;
+  char* ptr = a_str;
+  int count = 0;
+  while ((*ptr != '\n') && (*ptr != '\t') && (*ptr != ' ') && (count < strlen(a_str))) {
+    ptr++;
+    count++;
+  }
+  if (count < strlen(a_str)) {
+    *ptr = '\0';
+  }
 }
 
 u8* state_sequence_to_string(unsigned int *stateSequence, unsigned int stateCount) {

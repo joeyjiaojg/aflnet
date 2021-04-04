@@ -5,6 +5,8 @@
 #include "khash.h"
 #include <arpa/inet.h>
 #include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 typedef struct {
   int start_byte;                 /* The start byte, negative if unknown. */
@@ -34,7 +36,8 @@ typedef struct {
 
 enum {
   /* 00 */ PRO_TCP,
-  /* 01 */ PRO_UDP
+  /* 01 */ PRO_UDP,
+  PRO_DOMAIN
 };
 
 enum {
@@ -113,13 +116,10 @@ region_t* convert_kl_messages_to_regions(klist_t(lms) *kl_messages, u32* region_
 void save_regions_to_file(region_t *regions, unsigned int region_count, unsigned char *fname);
 
 /* Split a string using a delimiter */
-int str_split(char* a_str, const char* a_delim, char **result, int a_count);
+void str_split(char* a_str, const char* a_delim, char **result, int a_count);
 
 /* Remove unwanted characters from the right */
 void str_rtrim(char* a_str);
-
-/* Parse user provided server information to get IP address, transport protocol (TCP/UDP) and port number */
-int parse_net_config(u8* net_config, u8* protocol, u8** ip_address, u32* port);
 
 /* Convert state sequence to string */
 u8* state_sequence_to_string(unsigned int *stateSequence, unsigned int stateCount);
