@@ -56,6 +56,7 @@
 #include <termios.h>
 #include <dlfcn.h>
 #include <sched.h>
+#include <libgen.h>
 
 #include <sys/wait.h>
 #include <sys/time.h>

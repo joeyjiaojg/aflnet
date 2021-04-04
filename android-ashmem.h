@@ -3,8 +3,13 @@
 #define _ANDROID_ASHMEM_H
 
 #include <fcntl.h>
-#include <linux/ashmem.h>
+#ifdef AFL_NO_X86
+#include "linux/ashmem.h"
+# define CPU_SET(cpu, cpusetp)   __CPU_SET_S (cpu, sizeof (cpu_set_t), cpusetp)
+# define CPU_ZERO(cpusetp)       __CPU_ZERO_S (sizeof (cpu_set_t), cpusetp)
+#else
 #include <linux/shm.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
@@ -20,10 +25,11 @@
 #undef shmdt
 #undef shmget
 #include <stdio.h>
+#include <unistd.h>
 
 #define ASHMEM_DEVICE "/dev/ashmem"
 
-static inline int shmctl(int __shmid, int __cmd, struct shmid_ds *__buf) {
+inline int shmctl(int __shmid, int __cmd, struct shmid_ds *__buf) {
   int ret = 0;
   if (__cmd == IPC_RMID) {
     int length = ioctl(__shmid, ASHMEM_GET_SIZE, NULL);
@@ -35,7 +41,7 @@ static inline int shmctl(int __shmid, int __cmd, struct shmid_ds *__buf) {
   return ret;
 }
 
-static inline int shmget(key_t __key, size_t __size, int __shmflg) {
+inline int shmget(key_t __key, size_t __size, int __shmflg) {
   (void) __shmflg;
   int fd, ret;
   char ourkey[11];
@@ -60,7 +66,7 @@ error:
   return ret;
 }
 
-static inline void *shmat(int __shmid, const void *__shmaddr, int __shmflg) {
+inline void *shmat(int __shmid, const void *__shmaddr, int __shmflg) {
   (void) __shmflg;
   int size;
   void *ptr;
