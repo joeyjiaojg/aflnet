@@ -665,7 +665,6 @@ unsigned int choose_target_state(u8 mode) {
         }
         break;
       }
-
       result = update_scores_and_select_next_state(FAVOR);
       break;
     default:
@@ -1635,12 +1634,14 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->len          = len;
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
-  q->regions      = NULL;
-  q->region_count = 0;
-  q->index        = queued_paths;
-  q->generating_state_id = target_state_id;
-  q->is_initial_seed = 0;
-  q->unique_state_count = 0;
+  if (use_net) {
+    q->regions      = NULL;
+    q->region_count = 0;
+    q->index        = queued_paths;
+    q->generating_state_id = target_state_id;
+    q->is_initial_seed = 0;
+    q->unique_state_count = 0;
+  }
 
   if (q->depth > max_depth) max_depth = q->depth;
 
@@ -1664,7 +1665,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   }
 
   /* AFLNet: extract regions keeping client requests if needed */
-  if (corpus_read_or_sync) {
+  if (use_net && corpus_read_or_sync) {
     FILE *fp;
     unsigned char *buf;
 
@@ -1683,25 +1684,27 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
     //We use this for some optimization to reduce the overhead while following the server's sequence diagram
     if ((corpus_read_or_sync == 1) && (q->region_count > max_seed_region_count)) max_seed_region_count = q->region_count;
 
-  } else {
+  } else if (use_net) {
     //Convert the linked list kl_messages to regions
     q->regions = convert_kl_messages_to_regions(kl_messages, &q->region_count, messages_sent);
   }
 
-  /* save the regions' information to file for debugging purpose */
-  u8 *fn = alloc_printf("%s/regions/%s", out_dir, basename(fname));
-  save_regions_to_file(q->regions, q->region_count, fn);
-  ck_free(fn);
+  if (use_net) {
+    /* save the regions' information to file for debugging purpose */
+    u8 *fn = alloc_printf("%s/regions/%s", out_dir, basename(fname));
+    save_regions_to_file(q->regions, q->region_count, fn);
+    ck_free(fn);
+
+    //Add a new column to the was_fuzzed map
+    if (fuzzed_map_states) {
+      expand_was_fuzzed_map(0, 1);
+    } else {
+      //Also add a new row (for state 0) if needed
+      expand_was_fuzzed_map(1, 1);
+    }
+  }
 
   last_path_time = get_cur_time();
-
-  //Add a new column to the was_fuzzed map
-  if (fuzzed_map_states) {
-    expand_was_fuzzed_map(0, 1);
-  } else {
-    //Also add a new row (for state 0) if needed
-    expand_was_fuzzed_map(1, 1);
-  }
 }
 
 
@@ -1716,12 +1719,13 @@ EXP_ST void destroy_queue(void) {
     n = q->next;
     ck_free(q->fname);
     ck_free(q->trace_mini);
-    u32 i;
-    //Free AFLNet-specific data structure
-    for (i = 0; i < q->region_count; i++) {
-      if (q->regions[i].state_sequence) ck_free(q->regions[i].state_sequence);
+    if (use_net) {
+      //Free AFLNet-specific data structure
+      for (u32 i = 0; i < q->region_count; i++) {
+        if (q->regions[i].state_sequence) ck_free(q->regions[i].state_sequence);
+      }
+      if (q->regions) ck_free(q->regions);
     }
-    if (q->regions) ck_free(q->regions);
     ck_free(q);
     q = n;
 
@@ -2153,12 +2157,11 @@ static void update_bitmap_score(struct queue_entry* q) {
 
          /* AFLNet check unique state count first */
 
-         if (q->unique_state_count < top_rated[i]->unique_state_count) continue;
+         if (use_net &&q->unique_state_count < top_rated[i]->unique_state_count) continue;
 
          /* Faster-executing or smaller test cases are favored. */
 
-         if ((q->unique_state_count < top_rated[i]->unique_state_count) && (fav_factor > top_rated[i]->exec_us * top_rated[i]->len)) continue;
-
+         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
 
@@ -2210,7 +2213,7 @@ static void cull_queue(void) {
   q = queue;
 
   while (q) {
-    if (!q->is_initial_seed)
+    if ((use_net && !q->is_initial_seed) || !use_net)
       q->favored = 0;
     q = q->next;
   }
@@ -2232,9 +2235,9 @@ static void cull_queue(void) {
       top_rated[i]->favored = 1;
       queued_favored++;
 
-      //if (!top_rated[i]->was_fuzzed) pending_favored++;
       /* AFLNet takes into account more information to make this decision */
-      if ((top_rated[i]->generating_state_id == target_state_id || top_rated[i]->is_initial_seed) && (was_fuzzed_map[get_state_index(target_state_id)][top_rated[i]->index] == 0)) pending_favored++;
+      if (!use_net && !top_rated[i]->was_fuzzed) pending_favored++;
+      else if (use_net && (top_rated[i]->generating_state_id == target_state_id || top_rated[i]->is_initial_seed) && (was_fuzzed_map[get_state_index(target_state_id)][top_rated[i]->index] == 0)) pending_favored++;
 
     }
 
@@ -2321,7 +2324,7 @@ static void read_testcases(void) {
   u8* fn;
 
   /* AFLNet: set this flag to enable request extractions while adding new seed to the queue */
-  corpus_read_or_sync = 1;
+  if (use_net) corpus_read_or_sync = 1;
 
   /* Auto-detect non-in-place resumption attempts. */
 
@@ -2398,7 +2401,7 @@ static void read_testcases(void) {
   }
 
   /* AFLNet: unset this flag to disable request extractions while adding new seed to the queue */
-  corpus_read_or_sync = 0;
+  if (use_net) corpus_read_or_sync = 0;
 
   free(nl); /* not tracked */
 
@@ -3367,7 +3370,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
     if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
 
-    if (kill_signal == SIGTERM) return FAULT_NONE;
+    if (use_net && kill_signal == SIGTERM) return FAULT_NONE;
 
     return FAULT_CRASH;
 
@@ -3608,7 +3611,7 @@ static void perform_dry_run(char** argv) {
     u8  res;
     s32 fd;
 
-    q->is_initial_seed = 1;
+    if (use_net) q->is_initial_seed = 1;
 
     u8* fn = strrchr(q->fname, '/') + 1;
 
@@ -3625,21 +3628,23 @@ static void perform_dry_run(char** argv) {
     close(fd);
 
     /* AFLNet construct the kl_messages linked list for this queue entry*/
-    kl_messages = construct_kl_messages(q->fname, q->regions, q->region_count);
+    if (use_net) kl_messages = construct_kl_messages(q->fname, q->regions, q->region_count);
 
     res = calibrate_case(argv, q, use_mem, 0, 1);
     ck_free(use_mem);
 
     /* Update state-aware variables (e.g., state machine, regions and their annotations */
-    if (state_aware_mode) update_state_aware_variables(q, 1);
+    if (use_net && state_aware_mode) update_state_aware_variables(q, 1);
 
     /* save the seed to file for replaying */
-    u8 *fn_replay = alloc_printf("%s/replayable-queue/%s", out_dir, basename(q->fname));
-    save_kl_messages_to_file(kl_messages, fn_replay, 1, messages_sent);
-    ck_free(fn_replay);
+    if (use_net) {
+      u8 *fn_replay = alloc_printf("%s/replayable-queue/%s", out_dir, basename(q->fname));
+      save_kl_messages_to_file(kl_messages, fn_replay, 1, messages_sent);
+      ck_free(fn_replay);
 
-    /* AFLNet delete the kl_messages */
-    delete_kl_messages(kl_messages);
+      /* AFLNet delete the kl_messages */
+      delete_kl_messages(kl_messages);
+    }
 
     if (stop_soon) return;
 
@@ -4036,7 +4041,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
   u8  *fn = "";
   u8  hnb;
-  //s32 fd;
+  s32 fd;
   u8  keeping = 0, res;
 
   if (fault == crash_mode) {
@@ -4060,17 +4065,19 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #endif /* ^!SIMPLE_FILES */
 
-    u32 full_len = save_kl_messages_to_file(kl_messages, fn, 0, messages_sent);
+    if (use_net) {
+      u32 full_len = save_kl_messages_to_file(kl_messages, fn, 0, messages_sent);
 
-    /* We use the actual length of all messages (full_len), not the len of the mutated message subsequence (len)*/
-    add_to_queue(fn, full_len, 0);
+      /* We use the actual length of all messages (full_len), not the len of the mutated message subsequence (len)*/
+      add_to_queue(fn, full_len, 0);
 
-    if (state_aware_mode) update_state_aware_variables(queue_top, 0);
+      if (state_aware_mode) update_state_aware_variables(queue_top, 0);
 
-    /* save the seed to file for replaying */
-    u8 *fn_replay = alloc_printf("%s/replayable-queue/%s", out_dir, basename(queue_top->fname));
-    save_kl_messages_to_file(kl_messages, fn_replay, 1, messages_sent);
-    ck_free(fn_replay);
+      /* save the seed to file for replaying */
+      u8 *fn_replay = alloc_printf("%s/replayable-queue/%s", out_dir, basename(queue_top->fname));
+      save_kl_messages_to_file(kl_messages, fn_replay, 1, messages_sent);
+      ck_free(fn_replay);
+    }
 
     if (hnb == 2) {
       queue_top->has_new_cov = 1;
@@ -4087,10 +4094,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     if (res == FAULT_ERROR)
       FATAL("Unable to execute target application");
 
-    /*fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) PFATAL("Unable to create '%s'", fn);
-    ck_write(fd, mem, len, fn);
-    close(fd);*/
+    if (!use_net) {
+      fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      if (fd < 0) PFATAL("Unable to create '%s'", fn);
+      ck_write(fd, mem, len, fn);
+      close(fd);
+    }
 
     keeping = 1;
 
@@ -4145,13 +4154,21 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifndef SIMPLE_FILES
 
-      fn = alloc_printf("%s/replayable-hangs/id:%06llu,%s", out_dir,
-                        unique_hangs, describe_op(0));
+      if (use_net)
+        fn = alloc_printf("%s/replayable-hangs/id:%06llu,%s", out_dir,
+                          unique_hangs, describe_op(0));
+      else
+        fn = alloc_printf("%s/hangs/id:%06llu,%s", out_dir,
+                          unique_hangs, describe_op(0));
 
 #else
 
-      fn = alloc_printf("%s/replayable-hangs/id_%06llu", out_dir,
-                        unique_hangs);
+      if (use_net)
+        fn = alloc_printf("%s/replayable-hangs/id_%06llu", out_dir,
+                          unique_hangs);
+      else
+        fn = alloc_printf("%s/hangs/id_%06llu", out_dir,
+                          unique_hangs);
 
 #endif /* ^!SIMPLE_FILES */
 
@@ -4189,13 +4206,21 @@ keep_as_crash:
 
 #ifndef SIMPLE_FILES
 
-      fn = alloc_printf("%s/replayable-crashes/id:%06llu,sig:%02u,%s", out_dir,
-                        unique_crashes, kill_signal, describe_op(0));
+      if (use_net)
+        fn = alloc_printf("%s/replayable-crashes/id:%06llu,sig:%02u,%s", out_dir,
+                          unique_crashes, kill_signal, describe_op(0));
+      else
+        fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
+                          unique_crashes, kill_signal, describe_op(0));
 
 #else
 
-      fn = alloc_printf("%s/replayable-crashes/id_%06llu_%02u", out_dir, unique_crashes,
-                        kill_signal);
+      if (use_net)
+        fn = alloc_printf("%s/replayable-crashes/id_%06llu_%02u", out_dir, unique_crashes,
+                          kill_signal);
+      else
+        fn = alloc_printf("%s/crashes/id_%06llu_%02u", out_dir, unique_crashes,
+                          kill_signal);
 
 #endif /* ^!SIMPLE_FILES */
 
@@ -4215,12 +4240,13 @@ keep_as_crash:
   /* If we're here, we apparently want to save the crash or hang
      test case, too. */
 
-  save_kl_messages_to_file(kl_messages, fn, 1, messages_sent);
-
-  /*fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (fd < 0) PFATAL("Unable to create '%s'", fn);
-  ck_write(fd, mem, len, fn);
-  close(fd);*/
+  if (use_net) save_kl_messages_to_file(kl_messages, fn, 1, messages_sent);
+  else {
+    fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) PFATAL("Unable to create '%s'", fn);
+    ck_write(fd, mem, len, fn);
+    close(fd);
+  }
 
   ck_free(fn);
 
@@ -4693,17 +4719,23 @@ static void maybe_delete_out_dir(void) {
   if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
   ck_free(fn);
 
-  /* All right, let's do <out_dir>/replayable-crashes/id:* and <out_dir>/replayable-hangs/id:*. */
+  /* All right, let's do <out_dir>/[replayable-]crashes/id:* and <out_dir>/[replayable-]hangs/id:*. */
 
   if (!in_place_resume) {
 
-    fn = alloc_printf("%s/replayable-crashes/README.txt", out_dir);
+    if (use_net)
+      fn = alloc_printf("%s/replayable-crashes/README.txt", out_dir);
+    else
+      fn = alloc_printf("%s/crashes/README.txt", out_dir);
     unlink(fn); /* Ignore errors */
     ck_free(fn);
 
   }
 
-  fn = alloc_printf("%s/replayable-crashes", out_dir);
+  if (use_net)
+    fn = alloc_printf("%s/replayable-crashes", out_dir);
+  else
+    fn = alloc_printf("%s/crashes", out_dir);
 
   /* Make backup of the crashes directory if it's not empty and if we're
      doing in-place resume. */
@@ -4735,7 +4767,10 @@ static void maybe_delete_out_dir(void) {
   if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
   ck_free(fn);
 
-  fn = alloc_printf("%s/replayable-hangs", out_dir);
+  if (use_net)
+    fn = alloc_printf("%s/replayable-hangs", out_dir);
+  else
+    fn = alloc_printf("%s/hangs", out_dir);
 
   /* Backup hangs, too. */
 
@@ -4764,28 +4799,30 @@ static void maybe_delete_out_dir(void) {
   }
 
   if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
-  ck_free(fn);
+  if (use_net) {
+    ck_free(fn);
 
-  /* Delete regions. */
+    /* Delete regions. */
 
-  fn = alloc_printf("%s/regions", out_dir);
-  if (delete_files(fn, "")) goto dir_cleanup_failed;
-  ck_free(fn);
+    fn = alloc_printf("%s/regions", out_dir);
+    if (delete_files(fn, "")) goto dir_cleanup_failed;
+    ck_free(fn);
 
-  /* Delete replayable-queue. */
+    /* Delete replayable-queue. */
 
-  fn = alloc_printf("%s/replayable-queue", out_dir);
-  if (delete_files(fn, "")) goto dir_cleanup_failed;
-  ck_free(fn);
+    fn = alloc_printf("%s/replayable-queue", out_dir);
+    if (delete_files(fn, "")) goto dir_cleanup_failed;
+    ck_free(fn);
 
-  /* Delete the old ipsm.dot */
-  fn = alloc_printf("%s/ipsm.dot", out_dir);
-  if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
-  ck_free(fn);
+    /* Delete the old ipsm.dot */
+    fn = alloc_printf("%s/ipsm.dot", out_dir);
+    if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+    ck_free(fn);
 
-  /* Delete the old replayable-new-ipsm-paths folder */
-  fn = alloc_printf("%s/replayable-new-ipsm-paths", out_dir);
-  if (delete_files(fn, "")) goto dir_cleanup_failed;
+    /* Delete the old replayable-new-ipsm-paths folder */
+    fn = alloc_printf("%s/replayable-new-ipsm-paths", out_dir);
+    if (delete_files(fn, "")) goto dir_cleanup_failed;
+  }
   ck_free(fn);
 
   /* And now, for some finishing touches. */
@@ -5299,7 +5336,7 @@ static void show_stats(void) {
   } else SAYF("\r");
 
   /* Show debugging stats for AFLNet only when AFLNET_DEBUG environment variable is set */
-  if (getenv("AFLNET_DEBUG") && (atoi(getenv("AFLNET_DEBUG")) == 1) && state_aware_mode) {
+  if (use_net && getenv("AFLNET_DEBUG") && (atoi(getenv("AFLNET_DEBUG")) == 1) && state_aware_mode) {
     SAYF(cRST "\n\nMax_seed_region_count: %-4s, current_kl_messages_size: %-4s\n\n", DI(max_seed_region_count), DI(kl_messages->size));
     SAYF(cRST "State IDs and its #selected_times,"cCYA  "#fuzzs,"cLRD "#discovered_paths,"cGRA "#excersing_paths:\n");
 
@@ -5893,7 +5930,7 @@ static u8 fuzz_one(char** argv) {
 
   //Skip some steps if in state_aware_mode because in this mode
   //the seed is selected based on state-aware algorithms
-  if (state_aware_mode) goto AFLNET_REGIONS_SELECTION;
+  if (use_net && state_aware_mode) goto AFLNET_REGIONS_SELECTION;
 
   if (pending_favored) {
 
@@ -9114,10 +9151,7 @@ int main(int argc, char** argv) {
 
   if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
 
-  //AFLNet - Check for required arguments
-  if (!use_net) FATAL("Please specify network information of the server under test (e.g., tcp://127.0.0.1/8554, domain://SOCK_STREAM/domain_socket_path)");
-
-  if (!protocol_selected) FATAL("Please specify the protocol to be tested using the -P option");
+  if (use_net && !protocol_selected) FATAL("Please specify the protocol to be tested using the -P option");
 
   setup_signal_handlers();
   check_asan_opts();
@@ -9175,7 +9209,7 @@ int main(int argc, char** argv) {
   setup_shm();
   init_count_class16();
 
-  setup_ipsm();
+  if (use_net) setup_ipsm();
 
   setup_dirs_fds();
   read_testcases();
@@ -9221,7 +9255,7 @@ int main(int argc, char** argv) {
     if (stop_soon) goto stop_fuzzing;
   }
 
-  if (state_aware_mode) {
+  if (use_net && state_aware_mode) {
 
     if (state_ids_count == 0) {
       PFATAL("No server states have been detected. Server responses are likely empty!");
@@ -9380,7 +9414,7 @@ stop_fuzzing:
   ck_free(target_path);
   ck_free(sync_id);
 
-  destroy_ipsm();
+  if (use_net) destroy_ipsm();
 
   alloc_report();
 
