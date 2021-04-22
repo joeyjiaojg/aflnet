@@ -13,6 +13,20 @@
 
 // Protocol-specific functions for extracting requests and responses
 
+region_t* extract_requests_none(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref)
+{
+  region_t *regions = NULL;
+
+  regions = (region_t *)ck_realloc(regions, sizeof(region_t));
+  regions[0].start_byte = 0;
+  regions[0].end_byte = buf_size - 1;
+  regions[0].state_sequence = NULL;
+  regions[0].state_count = 0;
+
+  *region_count_ref = 1;
+  return regions;
+}
+
 region_t* extract_requests_smtp(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref)
 {
    char *mem;

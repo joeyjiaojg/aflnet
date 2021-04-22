@@ -74,6 +74,7 @@ unsigned int* extract_response_codes_http(unsigned char* buf, unsigned int buf_s
 unsigned int* extract_response_codes_ipp(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref);
 extern unsigned int* (*extract_response_codes)(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref);
 
+region_t* extract_requests_none(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref);
 region_t* extract_requests_smtp(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref);
 region_t* extract_requests_ssh(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref);
 region_t* extract_requests_tls(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref);

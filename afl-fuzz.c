@@ -8170,7 +8170,7 @@ static void usage(u8* argv0) {
        "Settings for network protocol fuzzing (AFLNet):\n\n"
 
        "  -N netinfo    - server information (e.g., tcp://127.0.0.1/8554 or domain://[SOCK_STREAM|SOCK_DGRAM]//dev/socket/path)\n"
-       "  -P protocol   - application protocol to be tested (e.g., RTSP, FTP, DTLS12, DNS, SMTP, SSH, TLS)\n"
+       "  -P protocol   - application protocol to be tested (e.g., RTSP, FTP, DTLS12, DNS, SMTP, SSH, TLS; default is NONE)\n"
        "  -D usec       - waiting time (in micro seconds) for the server to initialize\n"
        "  -W msec       - waiting time (in miliseconds) for receiving the first response to each input sent\n"
        "  -w usec       - waiting time (in micro seconds) for receiving follow-up responses\n"
@@ -9059,7 +9059,9 @@ int main(int argc, char** argv) {
       case 'P': /* protocol to be tested */
         if (protocol_selected) FATAL("Multiple -P options not supported");
 
-        if (!strcmp(optarg, "RTSP")) {
+        if (!strcmp(optarg, "NONE")) {
+          extract_requests = &extract_requests_none;
+        } else if (!strcmp(optarg, "RTSP")) {
           extract_requests = &extract_requests_rtsp;
           extract_response_codes = &extract_response_codes_rtsp;
         } else if (!strcmp(optarg, "FTP")) {
@@ -9151,7 +9153,11 @@ int main(int argc, char** argv) {
 
   if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
 
-  if (use_net && !protocol_selected) FATAL("Please specify the protocol to be tested using the -P option");
+  if (use_net && !protocol_selected) {
+    WARNF("protocol not specified, assuming NONE");
+    protocol_selected = 1;
+    extract_requests = &extract_requests_none;
+  }
 
   setup_signal_handlers();
   check_asan_opts();
