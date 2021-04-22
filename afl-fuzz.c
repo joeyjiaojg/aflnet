@@ -357,6 +357,7 @@ u32 server_wait_usecs = 10000;
 u32 poll_wait_msecs = 1;
 u32 socket_timeout_usecs = 1000;
 u8* net_url;
+u8  use_client_mode = 0;
 char *response_buf = NULL;
 int response_buf_size = 0; //the size of the whole response buffer
 u32 *response_bytes = NULL; //an array keeping accumulated response buffer size
@@ -369,7 +370,6 @@ u32 state_ids_count = 0;
 u32 selected_state_index = 0;
 u32 state_cycles = 0;
 u32 messages_sent = 0;
-EXP_ST u8 session_virgin_bits[MAP_SIZE];     /* Regions yet untouched while the SUT is still running */
 EXP_ST u8 *cleanup_script; /* script to clean up the environment of the SUT -- make fuzzing more deterministic */
 char **was_fuzzed_map = NULL; /* A 2D array keeping state-specific was_fuzzed information */
 u32 fuzzed_map_states = 0;
@@ -408,6 +408,8 @@ kliter_t(lms) *M2_prev, *M2_next;
 //Function pointers pointing to Protocol-specific functions
 unsigned int* (*extract_response_codes)(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref) = NULL;
 region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref) = NULL;
+
+static void write_to_testcase(void* mem, u32 len);
 
 /* Initialize the implemented state machine as a graphviz graph */
 void setup_ipsm()
@@ -1004,18 +1006,18 @@ int send_over_network()
   }
 
   // parse url
-  char  buf[1024] = {0};
+  char buf[1024] = {0};
   char **tokens;
   int tokenCount = 3;
 
+  if (use_client_mode) tokenCount = 2;
   if (strlen(net_url) > sizeof(buf)) return 1;
   tokens = (char**)malloc(sizeof(char*) * (tokenCount));
 
   strncpy(buf, net_url, strlen(net_url));
   str_rtrim(buf);
-
   str_split(buf, "/", tokens, tokenCount);
-  if (!tokens[0] || !tokens[1] || !tokens[2]) return 1;
+  if (!tokens[0] || !tokens[1] || (!use_client_mode && !tokens[2])) return 1;
 
   int sockfd = -1;
   u8* proto = tokens[0];
@@ -1034,6 +1036,51 @@ int send_over_network()
     } else if (!strcmp(type, "SOCK_DGRAM")) {
       sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
     } else return 1;
+  } else if (!strcmp(proto, "exec:")) {
+    // execute local script to call client to send message to server
+    // local script can be a bash script
+    // network like address: exec://../aflnet/client_wrapper.sh
+    u8* script_file = tokens[1];
+
+    //write the request messages
+    kliter_t(lms) *it;
+    messages_sent = 0;
+
+    memset(virgin_bits, 255, MAP_SIZE);
+    for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) {
+      int status;
+      pid_t pid = fork();
+      if (!pid) {
+        write_to_testcase(kl_val(it)->mdata, kl_val(it)->msize);
+        if (!getenv("AFL_DEBUG_CHILD")) {
+          dup2(dev_null_fd, 1);
+          dup2(dev_null_fd, 2);
+        }
+        dup2(out_fd, 0);
+        close(out_fd);
+        execv(script_file, NULL);
+        exit(0);
+      }
+      if (waitpid(pid, &status, 0) <= 0)
+        PFATAL("waitpid() failed");
+
+      messages_sent++;
+    }
+
+    //wait a bit letting the server to complete its remaining task(s)
+    while(1) {
+      if (has_new_bits(virgin_bits) != 2) break;
+    }
+
+    if (terminate_child && (child_pid > 0)) kill(child_pid, SIGTERM);
+
+    //give the server a bit more time to gracefully terminate
+    while(1) {
+      int status = kill(child_pid, 0);
+      if ((status != 0) && (errno == ESRCH)) break;
+    }
+
+    return 0;
   } else return 1;
 
   if (sockfd < 0) {
@@ -1154,9 +1201,9 @@ HANDLE_RESPONSES:
   }
 
   //wait a bit letting the server to complete its remaining task(s)
-  memset(session_virgin_bits, 255, MAP_SIZE);
+  memset(virgin_bits, 255, MAP_SIZE);
   while(1) {
-    if (has_new_bits(session_virgin_bits) != 2) break;
+    if (has_new_bits(virgin_bits) != 2) break;
   }
 
   close(sockfd);
@@ -9033,6 +9080,7 @@ int main(int argc, char** argv) {
         if (use_net) FATAL("Multiple -N options not supported");
         net_url = optarg;
         use_net = 1;
+        if (strstr(net_url, "exec://") != NULL) use_client_mode = 1;
         break;
 
       case 'D': /* waiting time for the server initialization */

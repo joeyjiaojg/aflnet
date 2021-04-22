@@ -1745,6 +1745,7 @@ void str_split(char* a_str, const char* a_delim, char **result, int a_count)
     result[count] = strdup(token);
     count++;
     if (count == a_count - 1) {
+      if (a_count == 2) tmp++;
       result[count] = tmp;
       break;
     }
