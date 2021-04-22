@@ -354,6 +354,7 @@ static inline u8 has_new_bits(u8* virgin_map);
 /* AFLNet-specific variables & functions */
 
 u32 server_wait_usecs = 10000;
+u8  first_run = 1;
 u32 poll_wait_msecs = 1;
 u32 socket_timeout_usecs = 1000;
 u8* net_url;
@@ -991,7 +992,10 @@ int send_over_network()
   if (cleanup_script) system(cleanup_script);
 
   //Wait a bit for the server initialization
-  usleep(server_wait_usecs);
+  if (first_run) {
+    usleep(server_wait_usecs);
+    first_run = 0;
+  } else usleep(10000);
 
   //Clear the response buffer and reset the response buffer size
   if (response_buf) {
