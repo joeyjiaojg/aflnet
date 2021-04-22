@@ -31,8 +31,9 @@ CFLAGS     ?= -O3 -funroll-loops
 ifneq "$(DEBUG)" ""
 CFLAGS     += -O0
 endif
-ifneq "$(ANDROID)" ""
-CFLAGS     += -D__ANDROID__
+ifneq "$(ADEB)" ""
+CFLAGS     += -D__ADEB__ -D__ANDROID__
+AFL_NO_X86  = 1
 endif
 CFLAGS     += -Wall -D_FORTIFY_SOURCE=2 -g -Wno-pointer-sign -Wno-unused-result \
 	      -DAFL_PATH=\"$(HELPER_PATH)\" -DDOC_PATH=\"$(DOC_PATH)\" \

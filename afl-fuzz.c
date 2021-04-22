@@ -69,7 +69,9 @@
 #include <sys/file.h>
 
 #include "aflnet.h"
+#ifndef __ADEB__
 #include <graphviz/gvc.h>
+#endif
 #include <math.h>
 
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
@@ -391,8 +393,10 @@ u8 state_selection_algo = ROUND_ROBIN, seed_selection_algo = RANDOM_SELECTION;
 u8 false_negative_reduction = 0;
 
 /* Implemented state machine */
+#ifndef __ANDROID__
 Agraph_t  *ipsm;
 static FILE* ipsm_dot_file;
+#endif
 
 /* Hash table/map and list */
 klist_t(lms) *kl_messages;
@@ -412,6 +416,7 @@ region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigne
 /* Initialize the implemented state machine as a graphviz graph */
 void setup_ipsm()
 {
+#ifndef __ANDROID__
   ipsm = agopen("g", Agdirected, 0);
 
   agattr(ipsm, AGNODE, "color", "black"); //Default node colr is black
@@ -420,11 +425,13 @@ void setup_ipsm()
   khs_ipsm_paths = kh_init(hs32);
 
   khms_states = kh_init(hms);
+#endif
 }
 
 /* Free memory allocated to state-machine variables */
 void destroy_ipsm()
 {
+#ifndef __ANDROID__
   agclose(ipsm);
 
   kh_destroy(hs32, khs_ipsm_paths);
@@ -434,6 +441,7 @@ void destroy_ipsm()
   kh_destroy(hms, khms_states);
 
   ck_free(state_ids);
+#endif
 }
 
 /* Get state index in the state IDs list, given a state ID */
@@ -3634,7 +3642,7 @@ static void perform_dry_run(char** argv) {
     ck_free(use_mem);
 
     /* Update state-aware variables (e.g., state machine, regions and their annotations */
-    if (use_net && state_aware_mode) update_state_aware_variables(q, 1);
+    if (state_aware_mode) update_state_aware_variables(q, 1);
 
     /* save the seed to file for replaying */
     if (use_net) {
