@@ -69,9 +69,7 @@
 #include <sys/file.h>
 
 #include "aflnet.h"
-#ifndef __ADEB__
 #include <graphviz/gvc.h>
-#endif
 #include <math.h>
 
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
@@ -393,10 +391,8 @@ u8 state_selection_algo = ROUND_ROBIN, seed_selection_algo = RANDOM_SELECTION;
 u8 false_negative_reduction = 0;
 
 /* Implemented state machine */
-#ifndef __ANDROID__
 Agraph_t  *ipsm;
 static FILE* ipsm_dot_file;
-#endif
 
 /* Hash table/map and list */
 klist_t(lms) *kl_messages;
@@ -416,7 +412,6 @@ region_t* (*extract_requests)(unsigned char* buf, unsigned int buf_size, unsigne
 /* Initialize the implemented state machine as a graphviz graph */
 void setup_ipsm()
 {
-#ifndef __ANDROID__
   ipsm = agopen("g", Agdirected, 0);
 
   agattr(ipsm, AGNODE, "color", "black"); //Default node colr is black
@@ -425,13 +420,11 @@ void setup_ipsm()
   khs_ipsm_paths = kh_init(hs32);
 
   khms_states = kh_init(hms);
-#endif
 }
 
 /* Free memory allocated to state-machine variables */
 void destroy_ipsm()
 {
-#ifndef __ANDROID__
   agclose(ipsm);
 
   kh_destroy(hs32, khs_ipsm_paths);
@@ -441,7 +434,6 @@ void destroy_ipsm()
   kh_destroy(hms, khms_states);
 
   ck_free(state_ids);
-#endif
 }
 
 /* Get state index in the state IDs list, given a state ID */
@@ -796,9 +788,9 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
         //Check if the prevStateID and curStateID have been added to the state machine as vertices
         //Check also if the edge prevStateID->curStateID has been added
         Agnode_t *from, *to;
-		    Agedge_t *edge;
-		    from = agnode(ipsm, fromState, FALSE);
-		    if (!from) {
+	Agedge_t *edge;
+	from = agnode(ipsm, fromState, FALSE);
+	if (!from) {
           //Add a node to the graph
           from = agnode(ipsm, fromState, TRUE);
           if (dry_run) agset(from,"color","blue");
@@ -827,8 +819,8 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           if (prevStateID != 0) expand_was_fuzzed_map(1, 0);
         }
 
-		    to = agnode(ipsm, toState, FALSE);
-		    if (!to) {
+        to = agnode(ipsm, toState, FALSE);
+        if (!to) {
           //Add a node to the graph
           to = agnode(ipsm, toState, TRUE);
           if (dry_run) agset(to,"color","blue");

@@ -3,7 +3,7 @@
 #define _ANDROID_ASHMEM_H
 
 #include <fcntl.h>
-#ifdef AFL_NO_X86
+#ifdef __ADEB__
 #include "linux/ashmem.h"
 # define CPU_SET(cpu, cpusetp)   __CPU_SET_S (cpu, sizeof (cpu_set_t), cpusetp)
 # define CPU_ZERO(cpusetp)       __CPU_ZERO_S (sizeof (cpu_set_t), cpusetp)
